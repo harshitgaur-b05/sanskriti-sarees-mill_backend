@@ -19,7 +19,21 @@ function isRazorpayConfigured(): boolean {
 // POST /api/orders/create
 export async function createOrder(req: Request, res: Response) {
   try {
-    const { items, customerName, customerEmail, customerPhone, shippingAddress } = req.body;
+    const {
+      items,
+      customerName,
+      customerEmail,
+      customerPhone,
+      shippingAddress,
+      firstName,
+      lastName,
+      company,
+      apartment,
+      city,
+      state,
+      pincode,
+      paymentMethod = "RAZORPAY",
+    } = req.body;
 
     if (!items || items.length === 0) {
       return res.status(400).json({ message: "Cart is empty" });
@@ -31,28 +45,41 @@ export async function createOrder(req: Request, res: Response) {
       0
     );
     const amountInPaise = Math.round(totalAmount * 100);
+    const orderNumber = `SAN-${Math.floor(10000 + Math.random() * 90000)}`;
 
-    // ── MOCK MODE ────────────────────────────────────────────────────────────
-    if (!isRazorpayConfigured()) {
+    const fullName = customerName || `${firstName || ""} ${lastName || ""}`.trim() || "Valued Customer";
+    const fullAddress = shippingAddress || `${apartment ? apartment + ", " : ""}${city || ""}, ${state || ""} ${pincode || ""}`.trim();
+
+    // ── MOCK / COD MODE ────────────────────────────────────────────────────────────
+    if (paymentMethod === "COD" || !isRazorpayConfigured()) {
       const mockOrderId = `mock_order_${Date.now()}`;
 
       const order = await Order.create({
+        orderNumber,
         razorpayOrderId: mockOrderId,
         amount: amountInPaise,
         currency: "INR",
-        status: "created",
+        paymentMethod: paymentMethod === "COD" ? "COD" : "RAZORPAY",
+        status: paymentMethod === "COD" ? "paid" : "created",
+        orderStatus: "PLACED",
         items,
-        customerName,
+        customerName: fullName,
         customerEmail,
         customerPhone,
-        shippingAddress,
+        shippingAddress: fullAddress,
+        firstName,
+        lastName,
+        company,
+        apartment,
+        city,
+        state,
+        pincode,
       });
 
-      console.log("⚠️  Razorpay keys not configured — returning mock order for testing.");
-
       return res.status(201).json({
-        mock: true,                          // tells the frontend to skip real Razorpay SDK
+        mock: true,
         orderId: mockOrderId,
+        orderNumber: order.orderNumber,
         amount: amountInPaise,
         currency: "INR",
         key: "mock_key",
@@ -69,28 +96,39 @@ export async function createOrder(req: Request, res: Response) {
     const razorpayOrder = await razorpay.orders.create({
       amount: amountInPaise,
       currency: "INR",
-      receipt: `receipt_${Date.now()}`,
+      receipt: `rcpt_${orderNumber}`,
       notes: {
-        customerName: customerName || "",
+        customerName: fullName,
         customerEmail: customerEmail || "",
       },
     });
 
     const order = await Order.create({
+      orderNumber,
       razorpayOrderId: razorpayOrder.id,
       amount: amountInPaise,
       currency: "INR",
+      paymentMethod: "RAZORPAY",
       status: "created",
+      orderStatus: "PLACED",
       items,
-      customerName,
+      customerName: fullName,
       customerEmail,
       customerPhone,
-      shippingAddress,
+      shippingAddress: fullAddress,
+      firstName,
+      lastName,
+      company,
+      apartment,
+      city,
+      state,
+      pincode,
     });
 
     return res.status(201).json({
       mock: false,
       orderId: razorpayOrder.id,
+      orderNumber: order.orderNumber,
       amount: amountInPaise,
       currency: "INR",
       key: process.env.RAZORPAY_KEY_ID,
@@ -107,7 +145,7 @@ export async function verifyPayment(req: Request, res: Response) {
   try {
     const { razorpayOrderId, razorpayPaymentId, razorpaySignature } = req.body;
 
-    // ── MOCK MODE: mock_ prefix means simulated payment ───────────────────────
+    // ── MOCK MODE ─────────────────────────────────────────────────────────────
     if (
       razorpayOrderId?.startsWith("mock_") ||
       razorpayPaymentId?.startsWith("mock_pay_")
@@ -115,13 +153,13 @@ export async function verifyPayment(req: Request, res: Response) {
       const order = await Order.findOneAndUpdate(
         { razorpayOrderId },
         {
-          razorpayPaymentId,
+          razorpayPaymentId: razorpayPaymentId || `pay_mock_${Date.now()}`,
           razorpaySignature: "mock_signature",
           status: "paid",
+          orderStatus: "PLACED",
         },
         { new: true }
       );
-      console.log("✅ Mock payment verified for order:", razorpayOrderId);
       return res.json({ success: true, mock: true, order });
     }
 
@@ -138,7 +176,7 @@ export async function verifyPayment(req: Request, res: Response) {
 
     const order = await Order.findOneAndUpdate(
       { razorpayOrderId },
-      { razorpayPaymentId, razorpaySignature, status: "paid" },
+      { razorpayPaymentId, razorpaySignature, status: "paid", orderStatus: "PLACED" },
       { new: true }
     );
 
@@ -163,11 +201,37 @@ export async function getOrders(req: Request, res: Response) {
 // GET /api/orders/:id
 export async function getOrder(req: Request, res: Response) {
   try {
-    const order = await Order.findById(req.params.id);
+    const id = req.params.id as string;
+    let order;
+    if (id && id.startsWith("SAN-")) {
+      order = await Order.findOne({ orderNumber: id });
+    } else {
+      order = await Order.findById(id);
+    }
     if (!order) return res.status(404).json({ message: "Order not found" });
     return res.json(order);
   } catch (error) {
     console.error(error);
     return res.status(500).json({ message: "Failed to fetch order" });
+  }
+}
+
+// PUT /api/orders/:id/status
+export async function updateOrderStatus(req: Request, res: Response) {
+  try {
+    const { id } = req.params;
+    const { orderStatus } = req.body;
+
+    if (!["PLACED", "PROCESSING", "SHIPPED", "DELIVERED"].includes(orderStatus)) {
+      return res.status(400).json({ message: "Invalid order status" });
+    }
+
+    const order = await Order.findByIdAndUpdate(id, { orderStatus }, { new: true });
+    if (!order) return res.status(404).json({ message: "Order not found" });
+
+    return res.json(order);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ message: "Failed to update order status" });
   }
 }

@@ -30,7 +30,9 @@ const blogSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 const heroSchema = new mongoose.Schema({
-  imageUrl: String
+  imageUrl: String,
+  images: [String],
+  interval: { type: Number, default: 4000 }
 }, { timestamps: true });
 
 const User = mongoose.models.User || mongoose.model("User", userSchema);
@@ -168,7 +170,14 @@ const blogs = [
 ];
 
 const heroConfig = {
-  imageUrl: "https://images.unsplash.com/photo-1610030469983-98e550d6193c?auto=format&fit=crop&q=80&w=1600"
+  imageUrl: "/screen.png",
+  images: [
+    "/screen.png",
+    "https://images.unsplash.com/photo-1610030469983-98e550d6193c?auto=format&fit=crop&q=80&w=1600",
+    "https://images.unsplash.com/photo-1617627143750-d86bc21e42bb?auto=format&fit=crop&q=80&w=1600",
+    "https://images.unsplash.com/photo-1609357605129-26f69add5d6e?auto=format&fit=crop&q=80&w=1600"
+  ],
+  interval: 4000
 };
 
 // ── Seed Function ─────────────────────────────────────────
@@ -201,13 +210,9 @@ async function seed() {
   console.log(`✅ ${blogs.length} blogs seeded.`);
 
   // ── Hero Config ─────────────────────────────────────────
-  const existingHero = await HeroConfig.findOne();
-  if (!existingHero) {
-    await HeroConfig.create(heroConfig);
-    console.log("✅ Hero config seeded.");
-  } else {
-    console.log("⚠️  Hero config already exists, skipping.");
-  }
+  await HeroConfig.deleteMany({});
+  await HeroConfig.create(heroConfig);
+  console.log("✅ Hero config carousel seeded.");
 
   console.log("\n🎉 Database seeding complete!");
   console.log(`   Admin: ${adminUser.email} / ${adminUser.password}`);

@@ -2,7 +2,9 @@ import mongoose from "mongoose";
 
 const heroConfigSchema = new mongoose.Schema(
   {
-    imageUrl: { type: String, required: true }
+    imageUrl: { type: String, required: false },
+    images: [{ type: String }],
+    interval: { type: Number, default: 4000 }
   },
   {
     timestamps: true,
