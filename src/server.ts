@@ -16,12 +16,33 @@ dotenv.config();
 
 const app = express();
 
-app.use(
-  cors({
-    origin: process.env.FRONTEND_URL || "http://localhost:3000",
-    credentials: true
-  })
-);
+// ── CORS ─────────────────────────────────────────────────────────────────────
+// Reads a comma-separated list of allowed origins from ALLOWED_ORIGINS env var,
+// falling back to FRONTEND_URL, then localhost for local development.
+const ALLOWED_ORIGINS = (
+  process.env.ALLOWED_ORIGINS || process.env.FRONTEND_URL || "http://localhost:3000"
+)
+  .split(",")
+  .map((o) => o.trim())
+  .filter(Boolean);
+
+const corsOptions: cors.CorsOptions = {
+  origin: (origin, callback) => {
+    // Allow requests with no origin (e.g. curl, Postman, server-to-server)
+    if (!origin) return callback(null, true);
+    if (ALLOWED_ORIGINS.includes(origin)) {
+      return callback(null, true);
+    }
+    console.warn(`[CORS] Blocked origin: ${origin}`);
+    return callback(new Error(`CORS policy does not allow origin: ${origin}`));
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+};
+
+// Handle CORS pre-flight and regular requests
+app.use(cors(corsOptions));
 
 app.use(helmet());
 app.use(morgan("dev"));

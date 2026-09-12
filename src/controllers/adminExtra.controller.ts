@@ -36,34 +36,40 @@ export async function deleteBlog(req: Request, res: Response) {
 }
 
 // HERO CONFIG CONTROLLERS
-const DEFAULT_HERO_IMAGES = [
-  "/screen.png",
-  "https://images.unsplash.com/photo-1610030469983-98e550d6193c?auto=format&fit=crop&q=80&w=1600",
-  "https://images.unsplash.com/photo-1617627143750-d86bc21e42bb?auto=format&fit=crop&q=80&w=1600",
-  "https://images.unsplash.com/photo-1609357605129-26f69add5d6e?auto=format&fit=crop&q=80&w=1600"
-];
-
 export async function getHeroConfig(req: Request, res: Response) {
   try {
     let hero = await HeroConfig.findOne();
     if (!hero) {
       return res.json({
-        imageUrl: DEFAULT_HERO_IMAGES[0],
-        images: DEFAULT_HERO_IMAGES,
-        imageUrls: DEFAULT_HERO_IMAGES,
+        imageUrl: "",
+        images: [],
+        imageUrls: [],
+        slides: [],
         interval: 4000
       });
     }
 
-    const images = Array.isArray(hero.images) && hero.images.length > 0
-      ? hero.images
-      : (hero.imageUrl ? [hero.imageUrl] : DEFAULT_HERO_IMAGES);
+    let slides: { imageUrl: string; targetUrl: string }[] = [];
+    if (Array.isArray(hero.slides) && hero.slides.length > 0) {
+      slides = hero.slides.map((s: any) => ({
+        imageUrl: s.imageUrl || "",
+        targetUrl: s.targetUrl || "/products"
+      }));
+    } else {
+      const imgList = Array.isArray(hero.images) && hero.images.length > 0
+        ? hero.images
+        : (hero.imageUrl ? [hero.imageUrl] : []);
+      slides = imgList.map((img: string) => ({ imageUrl: img, targetUrl: "/products" }));
+    }
+
+    const images = slides.map(s => s.imageUrl);
 
     return res.json({
       _id: hero._id,
-      imageUrl: hero.imageUrl || images[0],
+      imageUrl: hero.imageUrl || images[0] || "",
       images,
       imageUrls: images,
+      slides,
       interval: hero.interval || 4000
     });
   } catch (error) {
@@ -74,15 +80,27 @@ export async function getHeroConfig(req: Request, res: Response) {
 
 export async function updateHeroConfig(req: Request, res: Response) {
   try {
-    const { imageUrl, images, imageUrls, interval } = req.body;
+    const { imageUrl, images, imageUrls, slides: inputSlides, interval } = req.body;
 
-    const listToSave: string[] = Array.isArray(images) && images.length > 0
-      ? images
-      : Array.isArray(imageUrls) && imageUrls.length > 0
-      ? imageUrls
-      : (imageUrl ? [imageUrl] : DEFAULT_HERO_IMAGES);
+    let slidesToSave: { imageUrl: string; targetUrl: string }[] = [];
 
-    const firstImage = listToSave[0] || DEFAULT_HERO_IMAGES[0];
+    if (Array.isArray(inputSlides)) {
+      slidesToSave = inputSlides.map((s: any) => ({
+        imageUrl: typeof s === "string" ? s : (s.imageUrl || ""),
+        targetUrl: typeof s === "object" && s.targetUrl ? s.targetUrl : "/products"
+      })).filter(s => s.imageUrl.length > 0);
+    } else {
+      const listToSave: string[] = Array.isArray(images) && images.length > 0
+        ? images
+        : Array.isArray(imageUrls) && imageUrls.length > 0
+        ? imageUrls
+        : (imageUrl ? [imageUrl] : []);
+
+      slidesToSave = listToSave.map((img) => ({ imageUrl: img, targetUrl: "/products" }));
+    }
+
+    const imagesToSave = slidesToSave.map(s => s.imageUrl);
+    const firstImage = imagesToSave[0] || "";
     const targetInterval = typeof interval === "number" && interval >= 1000 ? interval : 4000;
 
     const existing = await HeroConfig.findOne();
@@ -92,7 +110,8 @@ export async function updateHeroConfig(req: Request, res: Response) {
         existing._id,
         {
           imageUrl: firstImage,
-          images: listToSave,
+          images: imagesToSave,
+          slides: slidesToSave,
           interval: targetInterval
         },
         { new: true }
@@ -100,18 +119,23 @@ export async function updateHeroConfig(req: Request, res: Response) {
     } else {
       hero = await HeroConfig.create({
         imageUrl: firstImage,
-        images: listToSave,
+        images: imagesToSave,
+        slides: slidesToSave,
         interval: targetInterval
       });
     }
 
-    const savedImages = hero.images && hero.images.length > 0 ? hero.images : [hero.imageUrl];
+    const savedSlides = hero.slides && hero.slides.length > 0
+      ? hero.slides.map((s: any) => ({ imageUrl: s.imageUrl, targetUrl: s.targetUrl || "/products" }))
+      : slidesToSave;
+    const savedImages = savedSlides.map((s: any) => s.imageUrl);
 
     return res.json({
       _id: hero._id,
       imageUrl: hero.imageUrl,
       images: savedImages,
       imageUrls: savedImages,
+      slides: savedSlides,
       interval: hero.interval || 4000
     });
   } catch (error) {
