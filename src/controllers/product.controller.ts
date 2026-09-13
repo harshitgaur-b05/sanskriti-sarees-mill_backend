@@ -4,6 +4,9 @@ import { Product } from "../models/Product.js";
 export async function getProducts(req: Request, res: Response) {
   try {
     const products = await Product.find().sort({ createdAt: -1 });
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
     return res.json(products);
   } catch (error) {
     console.error(error);
@@ -25,6 +28,9 @@ export async function getProduct(req: Request, res: Response) {
     if (!product) {
       return res.status(404).json({ message: "Product not found" });
     }
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
     return res.json(product);
   } catch (error) {
     console.error(error);
