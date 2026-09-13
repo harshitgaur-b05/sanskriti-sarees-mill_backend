@@ -13,6 +13,14 @@ export function auth(
   res: Response,
   next: NextFunction
 ) {
+  // ── Allow requests carrying a valid admin API key ────────────────────────
+  const adminKey = process.env.ADMIN_API_KEY;
+  if (adminKey && req.headers["x-admin-key"] === adminKey) {
+    req.user = { id: "admin", role: "admin" };
+    return next();
+  }
+
+  // ── Standard JWT bearer token ────────────────────────────────────────────
   const token = req.headers.authorization?.split(" ")[1];
 
   if (!token) {
