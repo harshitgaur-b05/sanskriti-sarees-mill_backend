@@ -45,6 +45,7 @@ export async function createProduct(req: Request, res: Response) {
       slug,
       description,
       price,
+      originalPrice,
       stock,
       image,
       category,
@@ -72,6 +73,7 @@ export async function createProduct(req: Request, res: Response) {
       slug: generatedSlug,
       description,
       price: Number(price),
+      originalPrice: originalPrice ? Number(originalPrice) : undefined,
       stock: Number(stock || 0),
       image,
       category,
@@ -99,6 +101,7 @@ export async function updateProduct(req: Request, res: Response) {
     const { id } = req.params;
     const data = { ...req.body };
     if (data.price !== undefined) data.price = Number(data.price);
+    if (data.originalPrice !== undefined && data.originalPrice !== "") data.originalPrice = Number(data.originalPrice);
     if (data.stock !== undefined) data.stock = Number(data.stock);
     if (data.isBestSeller !== undefined) data.isBestSeller = Boolean(data.isBestSeller);
 
