@@ -17,7 +17,7 @@ export async function getProducts(req: Request, res: Response) {
 export async function getProduct(req: Request, res: Response) {
   try {
     const idParam = req.params.id;
-    const id = Array.isArray(idParam) ? idParam[0] : idParam;
+    const id = (Array.isArray(idParam) ? idParam[0] : idParam)?.trim();
     let product = null;
     if (id && typeof id === "string" && id.match(/^[0-9a-fA-F]{24}$/)) {
       product = await Product.findById(id);
@@ -62,8 +62,9 @@ export async function createProduct(req: Request, res: Response) {
     } = req.body;
 
     const generatedSlug =
-      slug ||
+      (slug?.trim()) ||
       name
+        .trim()
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, "-")
         .replace(/(^-|-$)+/g, "");
