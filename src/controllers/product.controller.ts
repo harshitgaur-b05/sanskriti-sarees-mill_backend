@@ -56,6 +56,8 @@ export async function createProduct(req: Request, res: Response) {
       blouseType,
       blouseDimension,
       craft,
+      colors,
+      similarPieces
     } = req.body;
 
     const generatedSlug =
@@ -81,6 +83,8 @@ export async function createProduct(req: Request, res: Response) {
       blouseType,
       blouseDimension,
       craft,
+      colors: Array.isArray(colors) ? colors : [],
+      similarPieces: Array.isArray(similarPieces) ? similarPieces : []
     });
 
     return res.status(201).json(product);
