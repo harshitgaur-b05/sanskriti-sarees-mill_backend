@@ -42,7 +42,14 @@ export async function createProduct(req: Request, res: Response) {
       stock,
       image,
       category,
-      isBestSeller
+      isBestSeller,
+      sku,
+      occasion,
+      washCare,
+      sareeDimension,
+      blouseType,
+      blouseDimension,
+      craft,
     } = req.body;
 
     const generatedSlug =
@@ -60,7 +67,14 @@ export async function createProduct(req: Request, res: Response) {
       stock: Number(stock || 0),
       image,
       category,
-      isBestSeller: Boolean(isBestSeller)
+      isBestSeller: Boolean(isBestSeller),
+      sku,
+      occasion,
+      washCare,
+      sareeDimension,
+      blouseType,
+      blouseDimension,
+      craft,
     });
 
     return res.status(201).json(product);

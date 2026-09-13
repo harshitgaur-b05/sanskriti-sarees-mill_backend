@@ -13,7 +13,15 @@ const productSchema = new mongoose.Schema(
     // Array of hex color strings e.g. ["#C0392B", "#2C3E50"]
     colors: { type: [String], default: [] },
     // IDs / slugs of similar products
-    similarPieces: { type: [String], default: [] }
+    similarPieces: { type: [String], default: [] },
+    // New Fields for V1 specs
+    sku: { type: String, default: "" },
+    occasion: { type: String, default: "" },
+    washCare: { type: String, default: "" },
+    sareeDimension: { type: String, default: "" },
+    blouseType: { type: String, default: "" },
+    blouseDimension: { type: String, default: "" },
+    craft: { type: String, default: "" },
   },
   {
     timestamps: true,
