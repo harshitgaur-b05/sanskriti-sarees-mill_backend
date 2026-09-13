@@ -29,16 +29,11 @@ const blogSchema = new mongoose.Schema({
   image: String
 }, { timestamps: true });
 
-const heroSchema = new mongoose.Schema({
-  imageUrl: String,
-  images: [String],
-  interval: { type: Number, default: 4000 }
-}, { timestamps: true });
+import { HeroConfig } from "./models/HeroConfig.js";
 
 const User = mongoose.models.User || mongoose.model("User", userSchema);
 const Product = mongoose.models.Product || mongoose.model("Product", productSchema);
 const Blog = mongoose.models.Blog || mongoose.model("Blog", blogSchema);
-const HeroConfig = mongoose.models.HeroConfig || mongoose.model("HeroConfig", heroSchema);
 
 // ── Data ─────────────────────────────────────────────────
 const adminUser = {

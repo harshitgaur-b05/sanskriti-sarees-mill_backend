@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import Razorpay from "razorpay";
 import crypto from "crypto";
 import { Order } from "../models/Order.js";
+import { Product } from "../models/Product.js";
 
 // ── Detect whether real Razorpay keys are configured ─────────────────────────
 function isRazorpayConfigured(): boolean {
@@ -10,17 +11,32 @@ function isRazorpayConfigured(): boolean {
   return (
     id.length > 0 &&
     secret.length > 0 &&
-    !id.startsWith("rzp_test_XXXX") &&         // placeholder we put in .env
+    !id.startsWith("rzp_test_XXXX") &&
     id !== "your_razorpay_key_id" &&
     secret !== "your_razorpay_key_secret"
   );
+}
+
+// Helper to decrement stock for paid items
+async function reduceStock(items: any[]) {
+  for (const item of items) {
+    if (item.productId) {
+      try {
+        await Product.findByIdAndUpdate(item.productId, {
+          $inc: { stock: -item.quantity }
+        });
+      } catch (err) {
+        console.error(`Failed to decrement stock for product ${item.productId}:`, err);
+      }
+    }
+  }
 }
 
 // POST /api/orders/create
 export async function createOrder(req: Request, res: Response) {
   try {
     const {
-      items,
+      items: rawItems,
       customerName,
       customerEmail,
       customerPhone,
@@ -35,16 +51,44 @@ export async function createOrder(req: Request, res: Response) {
       paymentMethod = "RAZORPAY",
     } = req.body;
 
-    if (!items || items.length === 0) {
+    if (!rawItems || !Array.isArray(rawItems) || rawItems.length === 0) {
       return res.status(400).json({ message: "Cart is empty" });
     }
 
-    const totalAmount = items.reduce(
-      (sum: number, item: { price: number; quantity: number }) =>
-        sum + item.price * item.quantity,
-      0
-    );
-    const amountInPaise = Math.round(totalAmount * 100);
+    // ── SERVER-SIDE PRICE & STOCK VALIDATION ─────────────────────────────────
+    const validatedItems = [];
+    let calculatedTotal = 0;
+
+    for (const item of rawItems) {
+      const quantity = Math.max(1, Number(item.quantity) || 1);
+      const dbProduct = await Product.findById(item.productId);
+
+      if (!dbProduct) {
+        return res.status(400).json({
+          message: `Product "${item.name || item.productId}" is no longer available.`
+        });
+      }
+
+      if (dbProduct.stock < quantity) {
+        return res.status(400).json({
+          message: `Insufficient stock for "${dbProduct.name}". Available: ${dbProduct.stock}, requested: ${quantity}.`
+        });
+      }
+
+      const itemTotal = dbProduct.price * quantity;
+      calculatedTotal += itemTotal;
+
+      validatedItems.push({
+        productId: dbProduct._id.toString(),
+        name: dbProduct.name,
+        price: dbProduct.price,
+        quantity,
+        image: dbProduct.image || item.image || "",
+        category: dbProduct.category || item.category || ""
+      });
+    }
+
+    const amountInPaise = Math.round(calculatedTotal * 100);
     const orderNumber = `SAN-${Math.floor(10000 + Math.random() * 90000)}`;
 
     const fullName = customerName || `${firstName || ""} ${lastName || ""}`.trim() || "Valued Customer";
@@ -62,7 +106,7 @@ export async function createOrder(req: Request, res: Response) {
         paymentMethod: paymentMethod === "COD" ? "COD" : "RAZORPAY",
         status: paymentMethod === "COD" ? "paid" : "created",
         orderStatus: "PLACED",
-        items,
+        items: validatedItems,
         customerName: fullName,
         customerEmail,
         customerPhone,
@@ -76,6 +120,10 @@ export async function createOrder(req: Request, res: Response) {
         pincode,
       });
 
+      if (paymentMethod === "COD") {
+        await reduceStock(validatedItems);
+      }
+
       return res.status(201).json({
         mock: true,
         orderId: mockOrderId,
@@ -87,7 +135,7 @@ export async function createOrder(req: Request, res: Response) {
       });
     }
 
-    // ── LIVE MODE ────────────────────────────────────────────────────────────
+    // ── LIVE RAZORPAY ORDER CREATION ──────────────────────────────────────────
     const razorpay = new Razorpay({
       key_id: process.env.RAZORPAY_KEY_ID!,
       key_secret: process.env.RAZORPAY_KEY_SECRET!,
@@ -111,7 +159,7 @@ export async function createOrder(req: Request, res: Response) {
       paymentMethod: "RAZORPAY",
       status: "created",
       orderStatus: "PLACED",
-      items,
+      items: validatedItems,
       customerName: fullName,
       customerEmail,
       customerPhone,
@@ -156,10 +204,13 @@ export async function verifyPayment(req: Request, res: Response) {
           razorpayPaymentId: razorpayPaymentId || `pay_mock_${Date.now()}`,
           razorpaySignature: "mock_signature",
           status: "paid",
-          orderStatus: "PLACED",
+          orderStatus: "CONFIRMED",
         },
         { new: true }
       );
+      if (order && order.items) {
+        await reduceStock(order.items);
+      }
       return res.json({ success: true, mock: true, order });
     }
 
@@ -176,14 +227,68 @@ export async function verifyPayment(req: Request, res: Response) {
 
     const order = await Order.findOneAndUpdate(
       { razorpayOrderId },
-      { razorpayPaymentId, razorpaySignature, status: "paid", orderStatus: "PLACED" },
+      { razorpayPaymentId, razorpaySignature, status: "paid", orderStatus: "CONFIRMED" },
       { new: true }
     );
+
+    if (order && order.items) {
+      await reduceStock(order.items);
+    }
 
     return res.json({ success: true, mock: false, order });
   } catch (error) {
     console.error("Verify payment error:", error);
     return res.status(500).json({ message: "Verification failed" });
+  }
+}
+
+// POST /api/orders/webhook
+export async function handleWebhook(req: Request, res: Response) {
+  try {
+    const secret = process.env.RAZORPAY_WEBHOOK_SECRET;
+    const signature = req.headers["x-razorpay-signature"] as string;
+
+    if (secret && signature) {
+      const body = typeof req.body === "string" ? req.body : JSON.stringify(req.body);
+      const expectedSignature = crypto
+        .createHmac("sha256", secret)
+        .update(body)
+        .digest("hex");
+
+      if (expectedSignature !== signature) {
+        console.warn("[Webhook] Invalid signature received");
+        return res.status(400).json({ status: "invalid_signature" });
+      }
+    }
+
+    const event = req.body?.event;
+    const paymentEntity = req.body?.payload?.payment?.entity;
+
+    if (event === "payment.captured" && paymentEntity) {
+      const razorpayOrderId = paymentEntity.order_id;
+      const razorpayPaymentId = paymentEntity.id;
+
+      const order = await Order.findOneAndUpdate(
+        { razorpayOrderId },
+        { razorpayPaymentId, status: "paid", orderStatus: "CONFIRMED" },
+        { new: true }
+      );
+
+      if (order && order.items) {
+        await reduceStock(order.items);
+      }
+    } else if (event === "payment.failed" && paymentEntity) {
+      const razorpayOrderId = paymentEntity.order_id;
+      await Order.findOneAndUpdate(
+        { razorpayOrderId },
+        { status: "failed", failureReason: paymentEntity.error_description || "Payment failed" }
+      );
+    }
+
+    return res.json({ status: "ok" });
+  } catch (error) {
+    console.error("Webhook processing error:", error);
+    return res.status(500).json({ message: "Webhook handler failed" });
   }
 }
 
@@ -222,7 +327,7 @@ export async function updateOrderStatus(req: Request, res: Response) {
     const { id } = req.params;
     const { orderStatus } = req.body;
 
-    if (!["PLACED", "PROCESSING", "SHIPPED", "DELIVERED"].includes(orderStatus)) {
+    if (!["PLACED", "CONFIRMED", "PROCESSING", "SHIPPED", "DELIVERED", "CANCELLED"].includes(orderStatus)) {
       return res.status(400).json({ message: "Invalid order status" });
     }
 

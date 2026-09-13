@@ -13,7 +13,15 @@ export async function getProducts(req: Request, res: Response) {
 
 export async function getProduct(req: Request, res: Response) {
   try {
-    const product = await Product.findById(req.params.id);
+    const idParam = req.params.id;
+    const id = Array.isArray(idParam) ? idParam[0] : idParam;
+    let product = null;
+    if (id && typeof id === "string" && id.match(/^[0-9a-fA-F]{24}$/)) {
+      product = await Product.findById(id);
+    }
+    if (!product && id) {
+      product = await Product.findOne({ slug: id });
+    }
     if (!product) {
       return res.status(404).json({ message: "Product not found" });
     }

@@ -49,10 +49,11 @@ export async function getHeroConfig(req: Request, res: Response) {
       });
     }
 
-    let slides: { imageUrl: string; targetUrl: string }[] = [];
+    let slides: { imageUrl: string; mobileImageUrl?: string; targetUrl: string }[] = [];
     if (Array.isArray(hero.slides) && hero.slides.length > 0) {
       slides = hero.slides.map((s: any) => ({
         imageUrl: s.imageUrl || "",
+        mobileImageUrl: s.mobileImageUrl || "",
         targetUrl: s.targetUrl || "/products"
       }));
     } else {
@@ -82,11 +83,12 @@ export async function updateHeroConfig(req: Request, res: Response) {
   try {
     const { imageUrl, images, imageUrls, slides: inputSlides, interval } = req.body;
 
-    let slidesToSave: { imageUrl: string; targetUrl: string }[] = [];
+    let slidesToSave: { imageUrl: string; mobileImageUrl?: string; targetUrl: string }[] = [];
 
     if (Array.isArray(inputSlides)) {
       slidesToSave = inputSlides.map((s: any) => ({
         imageUrl: typeof s === "string" ? s : (s.imageUrl || ""),
+        mobileImageUrl: typeof s === "object" ? (s.mobileImageUrl || s.mobileImage || s.mobileUrl || "") : "",
         targetUrl: typeof s === "object" && s.targetUrl ? s.targetUrl : "/products"
       })).filter(s => s.imageUrl.length > 0);
     } else {
@@ -106,16 +108,12 @@ export async function updateHeroConfig(req: Request, res: Response) {
     const existing = await HeroConfig.findOne();
     let hero;
     if (existing) {
-      hero = await HeroConfig.findByIdAndUpdate(
-        existing._id,
-        {
-          imageUrl: firstImage,
-          images: imagesToSave,
-          slides: slidesToSave,
-          interval: targetInterval
-        },
-        { new: true }
-      );
+      existing.imageUrl = firstImage;
+      existing.images = imagesToSave;
+      existing.slides = slidesToSave;
+      existing.interval = targetInterval;
+      existing.markModified("slides");
+      hero = await existing.save();
     } else {
       hero = await HeroConfig.create({
         imageUrl: firstImage,
@@ -126,7 +124,11 @@ export async function updateHeroConfig(req: Request, res: Response) {
     }
 
     const savedSlides = hero.slides && hero.slides.length > 0
-      ? hero.slides.map((s: any) => ({ imageUrl: s.imageUrl, targetUrl: s.targetUrl || "/products" }))
+      ? hero.slides.map((s: any) => ({
+          imageUrl: s.imageUrl || "",
+          mobileImageUrl: s.mobileImageUrl || s.mobileImage || s.mobileUrl || "",
+          targetUrl: s.targetUrl || "/products"
+        }))
       : slidesToSave;
     const savedImages = savedSlides.map((s: any) => s.imageUrl);
 
