@@ -15,9 +15,21 @@ export async function uploadToCloudinary(
     const uploadResponse = await cloudinary.uploader.upload(fileStr, {
       folder,
       resource_type: "auto",
+      // Automatic image optimization for fast delivery (f_auto, q_auto)
+      transformation: [
+        { quality: "auto", fetch_format: "auto" }
+      ],
     });
+
+    // Generate optimized delivery URL with f_auto, q_auto
+    const optimizedUrl = cloudinary.url(uploadResponse.public_id, {
+      secure: true,
+      quality: "auto",
+      fetch_format: "auto",
+    });
+
     return {
-      url: uploadResponse.secure_url,
+      url: optimizedUrl || uploadResponse.secure_url,
       public_id: uploadResponse.public_id,
     };
   } catch (error) {

@@ -32,6 +32,7 @@ const orderSchema = new mongoose.Schema(
     refundStatus: { type: String, enum: ["none", "pending", "processed", "failed"], default: "none" },
     failureReason: { type: String },
     shippingFee: { type: Number, default: 0 },
+    sendCatalog: { type: Boolean, default: false },
     items: { type: [orderItemSchema], required: true },
     customerName: { type: String },
     customerEmail: { type: String },

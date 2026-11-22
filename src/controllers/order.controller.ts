@@ -48,6 +48,8 @@ export async function createOrder(req: Request, res: Response) {
       city,
       state,
       pincode,
+      sendCatalog = false,
+      shippingFee: clientShippingFee,
       paymentMethod = "RAZORPAY",
     } = req.body;
 
@@ -88,14 +90,27 @@ export async function createOrder(req: Request, res: Response) {
       });
     }
 
-    const amountInPaise = Math.round(calculatedTotal * 100);
+    // ── CUSTOMER-PAID DELIVERY CHARGE (Confirmed by shop owner later) ───────
+    const shippingFee =
+      typeof clientShippingFee === "number" && clientShippingFee >= 0
+        ? clientShippingFee
+        : 0;
+
+    const finalPayableTotal = calculatedTotal + shippingFee;
+    const amountInPaise = Math.round(finalPayableTotal * 100);
     const orderNumber = `SAN-${Math.floor(10000 + Math.random() * 90000)}`;
 
     const fullName = customerName || `${firstName || ""} ${lastName || ""}`.trim() || "Valued Customer";
     const fullAddress = shippingAddress || `${apartment ? apartment + ", " : ""}${city || ""}, ${state || ""} ${pincode || ""}`.trim();
 
-    // ── MOCK / COD MODE ────────────────────────────────────────────────────────────
-    if (paymentMethod === "COD" || !isRazorpayConfigured()) {
+    if (paymentMethod === "COD") {
+      return res.status(400).json({
+        message: "Cash on Delivery (COD) is not accepted. Sanskriti Sarees Mill operates strictly on 100% prepaid online orders via Razorpay."
+      });
+    }
+
+    // ── FALLBACK IF RAZORPAY KEYS NOT CONFIGURED ──────────────────────────
+    if (!isRazorpayConfigured()) {
       const mockOrderId = `mock_order_${Date.now()}`;
 
       const order = await Order.create({
@@ -103,9 +118,10 @@ export async function createOrder(req: Request, res: Response) {
         razorpayOrderId: mockOrderId,
         amount: amountInPaise,
         currency: "INR",
-        paymentMethod: paymentMethod === "COD" ? "COD" : "RAZORPAY",
-        status: paymentMethod === "COD" ? "paid" : "created",
+        paymentMethod: "RAZORPAY",
+        status: "created",
         orderStatus: "PLACED",
+        shippingFee,
         items: validatedItems,
         customerName: fullName,
         customerEmail,
@@ -120,16 +136,15 @@ export async function createOrder(req: Request, res: Response) {
         pincode,
       });
 
-      if (paymentMethod === "COD") {
-        await reduceStock(validatedItems);
-      }
-
       return res.status(201).json({
         mock: true,
         orderId: mockOrderId,
         orderNumber: order.orderNumber,
         amount: amountInPaise,
         currency: "INR",
+        subtotal: calculatedTotal,
+        shippingFee,
+        total: finalPayableTotal,
         key: "mock_key",
         dbOrderId: order._id,
       });
@@ -148,6 +163,9 @@ export async function createOrder(req: Request, res: Response) {
       notes: {
         customerName: fullName,
         customerEmail: customerEmail || "",
+        subtotal: calculatedTotal.toString(),
+        shippingFee: shippingFee.toString(),
+        total: finalPayableTotal.toString(),
       },
     });
 
@@ -159,6 +177,8 @@ export async function createOrder(req: Request, res: Response) {
       paymentMethod: "RAZORPAY",
       status: "created",
       orderStatus: "PLACED",
+      shippingFee,
+      sendCatalog,
       items: validatedItems,
       customerName: fullName,
       customerEmail,
@@ -179,6 +199,9 @@ export async function createOrder(req: Request, res: Response) {
       orderNumber: order.orderNumber,
       amount: amountInPaise,
       currency: "INR",
+      subtotal: calculatedTotal,
+      shippingFee,
+      total: finalPayableTotal,
       key: process.env.RAZORPAY_KEY_ID,
       dbOrderId: order._id,
     });
