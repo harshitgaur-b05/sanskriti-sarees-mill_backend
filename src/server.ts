@@ -10,6 +10,7 @@ import productRoutes from "./routes/product.routes.js";
 import adminExtraRoutes from "./routes/adminExtra.routes.js";
 import orderRoutes from "./routes/order.routes.js";
 import uploadRoutes from "./routes/upload.routes.js";
+import { createOrder, verifyPayment } from "./controllers/order.controller.js";
 
 dotenv.config();
 
@@ -67,9 +68,13 @@ app.use(async (_req, _res, next) => {
 app.get("/api/health", (_req, res) => {
   res.json({
     success: true,
-    message: "Sanskriti Sarees API is running with Mongoose"
+    message: "Sanskriti Sarees API is running with Mongoose and Razorpay"
   });
 });
+
+// Direct Razorpay Standard Webhook & Checkout endpoints
+app.post("/api/create-order", createOrder);
+app.post("/api/verify-payment", verifyPayment);
 
 app.use("/api/auth", authRoutes);
 app.use("/api/products", productRoutes);

@@ -32,10 +32,13 @@ async function reduceStock(items: any[]) {
   }
 }
 
-// POST /api/orders/create
+// POST /api/orders/create or /api/create-order
 export async function createOrder(req: Request, res: Response) {
   try {
     const {
+      amount: directAmount,
+      currency = "INR",
+      receipt: directReceipt,
       items: rawItems,
       customerName,
       customerEmail,
@@ -53,44 +56,53 @@ export async function createOrder(req: Request, res: Response) {
       paymentMethod = "RAZORPAY",
     } = req.body;
 
-    if (!rawItems || !Array.isArray(rawItems) || rawItems.length === 0) {
-      return res.status(400).json({ message: "Cart is empty" });
-    }
-
-    // ── SERVER-SIDE PRICE & STOCK VALIDATION ─────────────────────────────────
-    const validatedItems = [];
-    let calculatedTotal = 0;
-
-    for (const item of rawItems) {
-      const quantity = Math.max(1, Number(item.quantity) || 1);
-      const dbProduct = await Product.findById(item.productId);
-
-      if (!dbProduct) {
-        return res.status(400).json({
-          message: `Product "${item.name || item.productId}" is no longer available.`
-        });
-      }
-
-      if (dbProduct.stock < quantity) {
-        return res.status(400).json({
-          message: `Insufficient stock for "${dbProduct.name}". Available: ${dbProduct.stock}, requested: ${quantity}.`
-        });
-      }
-
-      const itemTotal = dbProduct.price * quantity;
-      calculatedTotal += itemTotal;
-
-      validatedItems.push({
-        productId: dbProduct._id.toString(),
-        name: dbProduct.name,
-        price: dbProduct.price,
-        quantity,
-        image: dbProduct.image || item.image || "",
-        category: dbProduct.category || item.category || ""
+    if (paymentMethod === "COD") {
+      return res.status(400).json({
+        message: "Cash on Delivery (COD) is not accepted. Sanskriti Sarees Mill operates strictly on 100% prepaid online orders via Razorpay."
       });
     }
 
-    // ── CUSTOMER-PAID DELIVERY CHARGE (Confirmed by shop owner later) ───────
+    let calculatedTotal = 0;
+    const validatedItems = [];
+
+    // Support both direct amount (paise) and cart items
+    if (typeof directAmount === "number" && directAmount > 0) {
+      calculatedTotal = directAmount / 100;
+    } else if (rawItems && Array.isArray(rawItems) && rawItems.length > 0) {
+      // ── SERVER-SIDE PRICE & STOCK VALIDATION ─────────────────────────────────
+      for (const item of rawItems) {
+        const quantity = Math.max(1, Number(item.quantity) || 1);
+        const dbProduct = await Product.findById(item.productId);
+
+        if (!dbProduct) {
+          return res.status(400).json({
+            message: `Product "${item.name || item.productId}" is no longer available.`
+          });
+        }
+
+        if (dbProduct.stock < quantity) {
+          return res.status(400).json({
+            message: `Insufficient stock for "${dbProduct.name}". Available: ${dbProduct.stock}, requested: ${quantity}.`
+          });
+        }
+
+        const itemTotal = dbProduct.price * quantity;
+        calculatedTotal += itemTotal;
+
+        validatedItems.push({
+          productId: dbProduct._id.toString(),
+          name: dbProduct.name,
+          price: dbProduct.price,
+          quantity,
+          image: dbProduct.image || item.image || "",
+          category: dbProduct.category || item.category || ""
+        });
+      }
+    } else {
+      return res.status(400).json({ message: "Cart is empty or amount is required." });
+    }
+
+    // Customer-paid delivery charge
     const shippingFee =
       typeof clientShippingFee === "number" && clientShippingFee >= 0
         ? clientShippingFee
@@ -98,88 +110,64 @@ export async function createOrder(req: Request, res: Response) {
 
     const finalPayableTotal = calculatedTotal + shippingFee;
     const amountInPaise = Math.round(finalPayableTotal * 100);
-    const orderNumber = `SAN-${Math.floor(10000 + Math.random() * 90000)}`;
 
+    // Validate minimum amount (minimum 100 paise = ₹1.00 as required by Razorpay)
+    if (!amountInPaise || amountInPaise < 100) {
+      return res.status(400).json({
+        message: "Order amount must be at least 100 paise (₹1.00)."
+      });
+    }
+
+    const orderNumber = `SAN-${Math.floor(10000 + Math.random() * 90000)}`;
     const fullName = customerName || `${firstName || ""} ${lastName || ""}`.trim() || "Valued Customer";
     const fullAddress = shippingAddress || `${apartment ? apartment + ", " : ""}${city || ""}, ${state || ""} ${pincode || ""}`.trim();
 
-    if (paymentMethod === "COD") {
-      return res.status(400).json({
-        message: "Cash on Delivery (COD) is not accepted. Sanskriti Sarees Mill operates strictly on 100% prepaid online orders via Razorpay."
-      });
-    }
-
-    // ── FALLBACK IF RAZORPAY KEYS NOT CONFIGURED ──────────────────────────
+    // Check if Razorpay keys are available
     if (!isRazorpayConfigured()) {
-      const mockOrderId = `mock_order_${Date.now()}`;
-
-      const order = await Order.create({
-        orderNumber,
-        razorpayOrderId: mockOrderId,
-        amount: amountInPaise,
-        currency: "INR",
-        paymentMethod: "RAZORPAY",
-        status: "created",
-        orderStatus: "PLACED",
-        shippingFee,
-        items: validatedItems,
-        customerName: fullName,
-        customerEmail,
-        customerPhone,
-        shippingAddress: fullAddress,
-        firstName,
-        lastName,
-        company,
-        apartment,
-        city,
-        state,
-        pincode,
-      });
-
-      return res.status(201).json({
-        mock: true,
-        orderId: mockOrderId,
-        orderNumber: order.orderNumber,
-        amount: amountInPaise,
-        currency: "INR",
-        subtotal: calculatedTotal,
-        shippingFee,
-        total: finalPayableTotal,
-        key: "mock_key",
-        dbOrderId: order._id,
+      return res.status(500).json({
+        message: "Razorpay credentials are not configured on the server."
       });
     }
 
-    // ── LIVE RAZORPAY ORDER CREATION ──────────────────────────────────────────
+    // Initialize Razorpay SDK with environment variables
     const razorpay = new Razorpay({
       key_id: process.env.RAZORPAY_KEY_ID!,
       key_secret: process.env.RAZORPAY_KEY_SECRET!,
     });
 
+    const receipt = directReceipt || `rcpt_${orderNumber}`;
+
+    // Call Razorpay API to create order
     const razorpayOrder = await razorpay.orders.create({
       amount: amountInPaise,
-      currency: "INR",
-      receipt: `rcpt_${orderNumber}`,
+      currency: currency || "INR",
+      receipt,
       notes: {
         customerName: fullName,
         customerEmail: customerEmail || "",
+        orderNumber,
         subtotal: calculatedTotal.toString(),
         shippingFee: shippingFee.toString(),
-        total: finalPayableTotal.toString(),
       },
     });
 
+    // Create record in database
     const order = await Order.create({
       orderNumber,
       razorpayOrderId: razorpayOrder.id,
       amount: amountInPaise,
-      currency: "INR",
+      currency: currency || "INR",
       paymentMethod: "RAZORPAY",
       status: "created",
       orderStatus: "PLACED",
       shippingFee,
       sendCatalog,
-      items: validatedItems,
+      items: validatedItems.length > 0 ? validatedItems : [{
+        productId: "custom",
+        name: `Order ${orderNumber}`,
+        price: calculatedTotal,
+        quantity: 1,
+      }],
       customerName: fullName,
       customerEmail,
       customerPhone,
@@ -194,63 +182,88 @@ export async function createOrder(req: Request, res: Response) {
     });
 
     return res.status(201).json({
-      mock: false,
+      order_id: razorpayOrder.id,
       orderId: razorpayOrder.id,
-      orderNumber: order.orderNumber,
       amount: amountInPaise,
-      currency: "INR",
+      currency: razorpayOrder.currency || "INR",
+      receipt: razorpayOrder.receipt,
+      orderNumber: order.orderNumber,
+      key: process.env.RAZORPAY_KEY_ID,
+      dbOrderId: order._id,
       subtotal: calculatedTotal,
       shippingFee,
       total: finalPayableTotal,
-      key: process.env.RAZORPAY_KEY_ID,
-      dbOrderId: order._id,
     });
-  } catch (error) {
-    console.error("Create order error:", error);
-    return res.status(500).json({ message: "Failed to create order" });
+  } catch (error: any) {
+    console.error("Razorpay Create Order Error:", error);
+    if (error?.statusCode === 401 || (error?.error?.code === "BAD_REQUEST_ERROR" && error?.error?.description?.toLowerCase().includes("auth"))) {
+      return res.status(401).json({ message: "Razorpay authentication failed. Please verify API key and secret." });
+    }
+    return res.status(500).json({
+      message: error?.error?.description || error?.message || "Failed to create Razorpay order"
+    });
   }
 }
 
-// POST /api/orders/verify
+// POST /api/orders/verify or /api/verify-payment
 export async function verifyPayment(req: Request, res: Response) {
   try {
-    const { razorpayOrderId, razorpayPaymentId, razorpaySignature } = req.body;
+    const {
+      razorpayOrderId,
+      razorpayPaymentId,
+      razorpaySignature,
+      order_id,
+      payment_id,
+      signature,
+      razorpay_order_id,
+      razorpay_payment_id,
+      razorpay_signature,
+    } = req.body;
 
-    // ── MOCK MODE ─────────────────────────────────────────────────────────────
-    if (
-      razorpayOrderId?.startsWith("mock_") ||
-      razorpayPaymentId?.startsWith("mock_pay_")
-    ) {
-      const order = await Order.findOneAndUpdate(
-        { razorpayOrderId },
-        {
-          razorpayPaymentId: razorpayPaymentId || `pay_mock_${Date.now()}`,
-          razorpaySignature: "mock_signature",
-          status: "paid",
-          orderStatus: "CONFIRMED",
-        },
-        { new: true }
-      );
-      if (order && order.items) {
-        await reduceStock(order.items);
-      }
-      return res.json({ success: true, mock: true, order });
+    const effectiveOrderId = razorpay_order_id || razorpayOrderId || order_id;
+    const effectivePaymentId = razorpay_payment_id || razorpayPaymentId || payment_id;
+    const effectiveSignature = razorpay_signature || razorpaySignature || signature;
+
+    // Validate missing fields
+    if (!effectiveOrderId || !effectivePaymentId || !effectiveSignature) {
+      return res.status(400).json({
+        success: false,
+        message: "Missing required fields: order_id, payment_id, and signature are required."
+      });
     }
 
-    // ── LIVE MODE: verify HMAC signature ─────────────────────────────────────
+    const secret = process.env.RAZORPAY_KEY_SECRET;
+    if (!secret) {
+      return res.status(500).json({
+        success: false,
+        message: "Razorpay secret key is not configured on the server."
+      });
+    }
+
+    // Verify HMAC-SHA256 signature
     const expectedSignature = crypto
-      .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET || "")
-      .update(`${razorpayOrderId}|${razorpayPaymentId}`)
+      .createHmac("sha256", secret)
+      .update(`${effectiveOrderId}|${effectivePaymentId}`)
       .digest("hex");
 
-    if (expectedSignature !== razorpaySignature) {
-      await Order.findOneAndUpdate({ razorpayOrderId }, { status: "failed" });
-      return res.status(400).json({ success: false, message: "Payment verification failed" });
+    if (expectedSignature !== effectiveSignature) {
+      // Signature mismatch: return 400, do NOT mark as paid
+      await Order.findOneAndUpdate({ razorpayOrderId: effectiveOrderId }, { status: "failed" });
+      return res.status(400).json({
+        success: false,
+        message: "Payment signature verification failed. Signatures do not match."
+      });
     }
 
+    // Update order status upon successful signature match
     const order = await Order.findOneAndUpdate(
-      { razorpayOrderId },
-      { razorpayPaymentId, razorpaySignature, status: "paid", orderStatus: "CONFIRMED" },
+      { razorpayOrderId: effectiveOrderId },
+      {
+        razorpayPaymentId: effectivePaymentId,
+        razorpaySignature: effectiveSignature,
+        status: "paid",
+        orderStatus: "CONFIRMED"
+      },
       { new: true }
     );
 
@@ -258,10 +271,17 @@ export async function verifyPayment(req: Request, res: Response) {
       await reduceStock(order.items);
     }
 
-    return res.json({ success: true, mock: false, order });
-  } catch (error) {
-    console.error("Verify payment error:", error);
-    return res.status(500).json({ message: "Verification failed" });
+    return res.status(200).json({
+      success: true,
+      message: "Payment verified successfully",
+      order
+    });
+  } catch (error: any) {
+    console.error("Razorpay Verify Payment Error:", error);
+    return res.status(500).json({
+      success: false,
+      message: error?.message || "Internal server error during payment verification"
+    });
   }
 }
 
